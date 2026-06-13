@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Chat</title>
+<script src="https://puter.com"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+<style>
+  html, body { height: 100%; }
+  body { background-color: #212121; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #4d4d4f; border-radius: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  textarea#prompt-input {
+    scrollbar-width: thin;
+  }
+
+  .prose-chat pre {
+    background-color: #0d0d0d;
+    border-radius: 8px;
+    padding: 1rem;
+    overflow-x: auto;
+    margin: 0.75rem 0;
+    font-size: 0.85rem;
+  }
+  .prose-chat code {
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 0.85em;
+  }
+  .prose-chat :not(pre) > code {
+    background-color: rgba(255,255,255,0.1);
+    padding: 0.15rem 0.35rem;
+    border-radius: 4px;
+  }
+  .prose-chat p { margin: 0.5rem 0; line-height: 1.7; }
+  .prose-chat ul, .prose-chat ol { margin: 0.5rem 0 0.5rem 1.5rem; line-height: 1.7; }
+  .prose-chat ul { list-style-type: disc; }
+  .prose-chat ol { list-style-type: decimal; }
+  .prose-chat h1, .prose-chat h2, .prose-chat h3 {
+    font-weight: 600; margin: 1rem 0 0.5rem 0;
+  }
+  .prose-chat h1 { font-size: 1.4rem; }
+  .prose-chat h2 { font-size: 1.2rem; }
+  .prose-chat h3 { font-size: 1.05rem; }
+  .prose-chat a { color: #60a5fa; text-decoration: underline; }
+  .prose-chat blockquote {
+    border-left: 3px solid #525252;
+    padding-left: 0.75rem;
+    color: #b4b4b4;
+    margin: 0.5rem 0;
+  }
+  .prose-chat table {
+    border-collapse: collapse;
+    margin: 0.75rem 0;
+    width: 100%;
+  }
+  .prose-chat th, .prose-chat td {
+    border: 1px solid #444;
+    padding: 0.4rem 0.6rem;
+    text-align: left;
+  }
+  .prose-chat strong { font-weight: 600; }
+
+  @keyframes blink-cursor {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+  }
+  .typing-cursor::after {
+    content: '▋';
+    display: inline-block;
+    margin-left: 2px;
+    animation: blink-cursor 1s step-start infinite;
+    color: #d1d5db;
+  }
+
+  .sidebar-transition { transition: transform 0.25s ease-in-out, width 0.25s ease-in-out; }
+
+  textarea#prompt-input {
+    max-height: 200px;
+  }
+
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .msg-enter { animation: fade-in 0.25s ease-out; }
+</style>
+</head>
+<body class="h-full overflow-hidden text-[#ececec]">
+
+<!-- LOGIN SCREEN -->
+<div id="login-screen" class="fixed inset-0 z-50 flex items-center justify-center bg-[#212121]">
+  <div class="flex flex-col items-center gap-6 px-6 text-center">
+    <div class="flex items-center justify-center w-16 h-16 rounded-full bg-[#2f2f2f] border border-[#3a3a3a]">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="#ececec" stroke-width="1.5" stroke-linejoin="round"/>
+        <path d="M2 17L12 22L22 17" stroke="#ececec" stroke-width="1.5" stroke-linejoin="round"/>
+        <path d="M2 12L12 17L22 12" stroke="#ececec" stroke-width="1.5" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <div>
+      <h1 class="text-3xl font-semibold mb-2">Welcome</h1>
+      <p class="text-[#b4b4b4] text-sm max-w-xs">Sign in with your Puter account to start chatting for free. No API key required.</p>
+    </div>
+    <button id="signin-btn" class="bg-[#ececec] text-[#212121] font-medium px-6 py-3 rounded-full hover:bg-white transition-colors text-sm flex items-center gap-2">
+      Sign in with Puter to Chat for Free
+    </button>
+  </div>
+</div>
+
+<!-- APP SHELL -->
+<div id="app" class="hidden h-full w-full flex">
+
+  <!-- Mobile overlay -->
+  <div id="sidebar-overlay" class="hidden fixed inset-0 bg-black/50 z-30 md:hidden"></div>
+
+  <!-- SIDEBAR -->
+  <aside id="sidebar" class="sidebar-transition fixed md:relative z-40 h-full w-[260px] -translate-x-full md:translate-x-0 bg-[#171717] flex flex-col flex-shrink-0">
+    <div class="flex items-center justify-between p-3">
+      <button id="new-chat-btn" class="flex items-center gap-2 px-3 py-2.5 rounded-lg hover:bg-[#2f2f2f] transition-colors w-full text-sm font-medium">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        New chat
+      </button>
+      <button id="sidebar-close-btn" class="md:hidden p-2 rounded-lg hover:bg-[#2f2f2f] ml-1">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <div class="flex-1 overflow-y-auto px-2">
+      <div class="px-3 py-2 text-xs text-[#8e8e8e] font-medium">Chats</div>
+      <div id="chat-history-list" class="flex flex-col gap-0.5">
+        <!-- chat history items appended here -->
+      </div>
+    </div>
+
+    <div class="border-t border-[#2f2f2f] p-2">
+      <div id="user-profile-btn" class="flex items-center gap-3 px-2 py-2.5 rounded-lg hover:bg-[#2f2f2f] cursor-pointer transition-colors">
+        <div class="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center text-sm font-semibold flex-shrink-0">
+          <span id="user-initial">U</span>
+        </div>
+        <div class="flex-1 min-w-0">
+          <div id="user-name" class="text-sm font-medium truncate">User</div>
+          <div class="text-xs text-[#8e8e8e]">Puter account</div>
+        </div>
+        <button id="logout-btn" title="Log out" class="p-1.5 rounded-md hover:bg-[#3a3a3a] flex-shrink-0">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <div class="flex-1 flex flex-col h-full min-w-0 bg-[#212121]">
+
+    <!-- Top bar -->
+    <header class="flex items-center justify-between px-3 py-2.5 flex-shrink-0">
+      <button id="sidebar-open-btn" class="p-2 rounded-lg hover:bg-[#2f2f2f] transition-colors md:hidden">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+      </button>
+      <button id="sidebar-open-btn-desktop" class="hidden md:block p-2 rounded-lg hover:bg-[#2f2f2f] transition-colors">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+      </button>
+      <div class="font-semibold text-sm text-[#ececec]">Claude Opus 4.8</div>
+      <div class="w-9"></div>
+    </header>
+
+    <!-- Messages -->
+    <main id="messages-container" class="flex-1 overflow-y-auto">
+      <div id="welcome-screen" class="h-full flex items-center justify-center px-4">
+        <h1 class="text-3xl md:text-4xl font-semibold text-[#ececec] text-center">What can I help with today?</h1>
+      </div>
+      <div id="messages-list" class="hidden max-w-3xl mx-auto w-full px-4 pb-8 flex flex-col gap-6 pt-4"></div>
+    </main>
+
+    <!-- Input -->
+    <div class="flex-shrink-0 px-3 pb-3 md:pb-5">
+      <div class="max-w-3xl mx-auto">
+        <div class="flex items-end gap-2 bg-[#2f2f2f] rounded-3xl px-4 py-2.5 shadow-lg border border-[#3a3a3a] focus-within:border-[#565656] transition-colors">
+          <textarea
+            id="prompt-input"
+            rows="1"
+            placeholder="Message Claude..."
+            class="flex-1 bg-transparent resize-none outline-none text-[#ececec] placeholder-[#8e8e8e] text-sm py-1.5 leading-6 max-h-48 overflow-y-auto"
+          ></textarea>
+          <button id="send-btn" disabled class="flex-shrink-0 w-8 h-8 rounded-full bg-[#676767] text-[#212121] flex items-center justify-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed hover:bg-[#ececec]">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+          </button>
+        </div>
+        <p class="text-center text-xs text-[#8e8e8e] mt-2">AI can make mistakes. Check important info.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const loginScreen = document.getElementById('login-screen');
+  const app = document.getElementById('app');
+  const signinBtn = document.getElementById('signin-btn');
+  const logoutBtn = document.getElementById('logout-btn');
+  const userNameEl = document.getElementById('user-name');
+  const userInitialEl = document.getElementById('user-initial');
+
+  const sidebar = document.getElementById('sidebar');
+  const sidebarOverlay = document.getElementById('sidebar-overlay');
+  const sidebarOpenBtn = document.getElementById('sidebar-open-btn');
+  const sidebarOpenBtnDesktop = document.getElementById('sidebar-open-btn-desktop');
+  const sidebarCloseBtn = document.getElementById('sidebar-close-btn');
+  const newChatBtn = document.getElementById('new-chat-btn');
+  const chatHistoryList = document.getElementById('chat-history-list');
+
+  const messagesContainer = document.getElementById('messages-container');
+  const messagesList = document.getElementById('messages-list');
+  const welcomeScreen = document.getElementById('welcome-screen');
+
+  const promptInput = document.getElementById('prompt-input');
+  const sendBtn = document.getElementById('send-btn');
+
+  let messages = [];
+  let isStreaming = false;
+  let chatHistories = []; // {id, title, messages}
+  let currentChatId = null;
+
+  // ---------- Auth ----------
+  async function checkAuth() {
+    try {
+      const loggedIn = await puter.auth.is_logged_in();
+      if (loggedIn) {
+        await onLoggedIn();
+      } else {
+        showLogin();
+      }
+    } catch (e) {
+      showLogin();
+    }
+  }
+
+  function showLogin() {
+    loginScreen.classList.remove('hidden');
+    app.classList.add('hidden');
+  }
+
+  async function onLoggedIn() {
+    loginScreen.classList.add('hidden');
+    app.classList.remove('hidden');
+    try {
+      const user = await puter.auth.get_user();
+      const name = (user && (user.username || user.email)) || 'User';
+      userNameEl.textContent = name;
+      userInitialEl.textContent = name.charAt(0).toUpperCase();
+    } catch (e) {
+      userNameEl.textContent = 'User';
+    }
+    startNewChat();
+  }
+
+  signinBtn.addEventListener('click', async () => {
+    try {
+      await puter.auth.sign_in();
+      await onLoggedIn();
+    } catch (e) {
+      console.error('Sign-in failed', e);
+    }
+  });
+
+  logoutBtn.addEventListener('click', async () => {
+    try {
+      await puter.auth.sign_out();
+    } catch (e) {}
+    location.reload();
+  });
+
+  // ---------- Sidebar ----------
+  function openSidebar() {
+    sidebar.classList.remove('-translate-x-full');
+    sidebar.classList.add('translate-x-0');
+    sidebarOverlay.classList.remove('hidden');
+  }
+  function closeSidebar() {
+    sidebar.classList.add('-translate-x-full');
+    sidebar.classList.remove('translate-x-0');
+    sidebarOverlay.classList.add('hidden');
+  }
+  sidebarOpenBtn.addEventListener('click', openSidebar);
+  sidebarCloseBtn.addEventListener('click', closeSidebar);
+  sidebarOverlay.addEventListener('click', closeSidebar);
+
+  // Desktop collapse toggle
+  let sidebarCollapsedDesktop = false;
+  sidebarOpenBtnDesktop.addEventListener('click', () => {
+    sidebarCollapsedDesktop = !sidebarCollapsedDesktop;
+    if (sidebarCollapsedDesktop) {
+      sidebar.style.width = '0px';
+      sidebar.style.overflow = 'hidden';
+    } else {
+      sidebar.style.width = '260px';
+      sidebar.style.overflow = '';
+    }
+  });
+
+  // On mobile, sidebar starts hidden via -translate-x-full (already set). On desktop it's visible via md:translate-x-0.
+
+  // ---------- Chat management ----------
+  function startNewChat() {
+    messages = [];
+    currentChatId = 'chat_' + Date.now();
+    messagesList.innerHTML = '';
+    messagesList.classList.add('hidden');
+    welcomeScreen.classList.remove('hidden');
+    promptInput.value = '';
+    autoResizeTextarea();
+    updateSendButtonState();
+    closeSidebar();
+    renderHistoryList();
+  }
+
+  newChatBtn.addEventListener('click', startNewChat);
+
+  function addChatToHistory() {
+    if (messages.length === 0) return;
+    const existing = chatHistories.find(c => c.id === currentChatId);
+    const title = (messages[0].content || '').slice(0, 40) || 'New chat';
+    if (existing) {
+      existing.messages = messages.slice();
+      existing.title = title;
+    } else {
+      chatHistories.unshift({ id: currentChatId, title: title, messages: messages.slice() });
+    }
+    renderHistoryList();
+  }
+
+  function renderHistoryList() {
+    chatHistoryList.innerHTML = '';
+    chatHistories.forEach(chat => {
+      const item = document.createElement('div');
+      item.className = 'px-3 py-2 rounded-lg hover:bg-[#2f2f2f] cursor-pointer text-sm truncate transition-colors ' +
+        (chat.id === currentChatId ? 'bg-[#2f2f2f]' : '');
+      item.textContent = chat.title;
+      item.addEventListener('click', () => loadChat(chat.id));
+      chatHistoryList.appendChild(item);
+    });
+  }
+
+  function loadChat(id) {
+    const chat = chatHistories.find(c => c.id === id);
+    if (!chat) return;
+    currentChatId = id;
+    messages = chat.messages.slice();
+    messagesList.innerHTML = '';
+    if (messages.length === 0) {
+      welcomeScreen.classList.remove('hidden');
+      messagesList.classList.add('hidden');
+    } else {
+      welcomeScreen.classList.add('hidden');
+      messagesList.classList.remove('hidden');
+      messages.forEach(m => renderMessage(m.role, m.content));
+    }
+    renderHistoryList();
+    closeSidebar();
+    scrollToBottom();
+  }
+
+  // ---------- Textarea ----------
+  function autoResizeTextarea() {
+    promptInput.style.height = 'auto';
+    const newHeight = Math.min(promptInput.scrollHeight, 200);
+    promptInput.style.height = newHeight + 'px';
+  }
+
+  promptInput.addEventListener('input', () => {
+    autoResizeTextarea();
+    updateSendButtonState();
+  });
+
+  promptInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  });
+
+  function updateSendButtonState() {
+    const hasText = promptInput.value.trim().length > 0;
+    sendBtn.disabled = !hasText || isStreaming;
+  }
+
+  // ---------- Rendering ----------
+  function scrollToBottom(smooth = true) {
+    messagesContainer.scrollTo({
+      top: messagesContainer.scrollHeight,
+      behavior: smooth ? 'smooth' : 'auto'
+    });
+  }
+
+  function renderMessage(role, content) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'flex w-full msg-enter ' + (role === 'user' ? 'justify-end' : 'justify-start');
+
+    if (role === 'user') {
+      const bubble = document.createElement('div');
+      bubble.className = 'bg-[#2f2f2f] text-[#ececec] rounded-3xl px-5 py-2.5 max-w-[80%] whitespace-pre-wrap break-words text-sm leading-7';
+      bubble.textContent = content;
+      wrapper.appendChild(bubble);
+    } else {
+      const container = document.createElement('div');
+      container.className = 'max-w-full w-full prose-chat text-sm text-[#ececec]';
+      container.innerHTML = marked.parse(content || '');
+      wrapper.appendChild(container);
+    }
+
+    messagesList.appendChild(wrapper);
+    return wrapper;
+  }
+
+  function renderAssistantStreaming() {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'flex w-full justify-start msg-enter';
+    const container = document.createElement('div');
+    container.className = 'max-w-full w-full prose-chat text-sm text-[#ececec] typing-cursor';
+    wrapper.appendChild(container);
+    messagesList.appendChild(wrapper);
+    return container;
+  }
+
+  // ---------- Send ----------
+  async function handleSend() {
+    const text = promptInput.value.trim();
+    if (!text || isStreaming) return;
+
+    welcomeScreen.classList.add('hidden');
+    messagesList.classList.remove('hidden');
+
+    messages.push({ role: 'user', content: text });
+    renderMessage('user', text);
+
+    promptInput.value = '';
+    autoResizeTextarea();
+    isStreaming = true;
+    updateSendButtonState();
+    scrollToBottom();
+
+    const assistantEl = renderAssistantStreaming();
+    let assistantContent = '';
+    let firstChunkReceived = false;
+
+    try {
+      const response = await puter.ai.chat(messages, {
+        model: 'anthropic/claude-opus-4-8',
+        stream: true
+      });
+
+      for await (const part of response) {
+        const chunkText = (part && part.text) ? part.text :
+                           (typeof part === 'string' ? part : '');
+        if (chunkText) {
+          if (!firstChunkReceived) {
+            firstChunkReceived = true;
+          }
+          assistantContent += chunkText;
+          assistantEl.innerHTML = marked.parse(assistantContent);
+          scrollToBottom();
+        }
+      }
+
+      assistantEl.classList.remove('typing-cursor');
+      messages.push({ role: 'assistant', content: assistantContent });
+      addChatToHistory();
+    } catch (err) {
+      console.error('Chat error:', err);
+      assistantEl.classList.remove('typing-cursor');
+      assistantContent = assistantContent || 'Sorry, something went wrong while generating a response. Please try again.';
+      assistantEl.innerHTML = marked.parse(assistantContent);
+      messages.push({ role: 'assistant', content: assistantContent });
+      addChatToHistory();
+    } finally {
+      isStreaming = false;
+      updateSendButtonState();
+      scrollToBottom();
+    }
+  }
+
+  sendBtn.addEventListener('click', handleSend);
+
+  // ---------- Init ----------
+  checkAuth();
+})();
+</script>
+</body>
+</html>
