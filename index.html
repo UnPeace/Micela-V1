@@ -227,7 +227,7 @@
   // ---------- Auth ----------
   async function checkAuth() {
     try {
-      const loggedIn = await puter.auth.is_logged_in();
+      const loggedIn = await puter.auth.isSignedIn();
       if (loggedIn) {
         await onLoggedIn();
       } else {
@@ -247,7 +247,7 @@
     loginScreen.classList.add('hidden');
     app.classList.remove('hidden');
     try {
-      const user = await puter.auth.get_user();
+      const user = await puter.auth.getUser();
       const name = (user && (user.username || user.email)) || 'User';
       userNameEl.textContent = name;
       userInitialEl.textContent = name.charAt(0).toUpperCase();
@@ -259,7 +259,7 @@
 
   signinBtn.addEventListener('click', async () => {
     try {
-      await puter.auth.sign_in();
+      await puter.auth.signIn();
       await onLoggedIn();
     } catch (e) {
       console.error('Sign-in failed', e);
@@ -268,7 +268,7 @@
 
   logoutBtn.addEventListener('click', async () => {
     try {
-      await puter.auth.sign_out();
+      await puter.auth.signOut();
     } catch (e) {}
     location.reload();
   });
