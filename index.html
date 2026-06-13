@@ -418,12 +418,249 @@
   function renderAssistantStreaming() {
     const wrapper = document.createElement('div');
     wrapper.className = 'flex w-full justify-start msg-enter';
+    const inner = document.createElement('div');
+    inner.className = 'max-w-full w-full flex flex-col gap-2';
+    const status = document.createElement('div');
+    status.className = 'hidden text-xs text-[#8e8e8e] flex items-center gap-2';
     const container = document.createElement('div');
     container.className = 'max-w-full w-full prose-chat text-sm text-[#ececec] typing-cursor';
-    wrapper.appendChild(container);
+    inner.appendChild(status);
+    inner.appendChild(container);
+    wrapper.appendChild(inner);
     messagesList.appendChild(wrapper);
-    return container;
+    return { container, status };
   }
+
+  function setStatus(statusEl, text) {
+    if (!text) {
+      statusEl.classList.add('hidden');
+      statusEl.innerHTML = '';
+      return;
+    }
+    statusEl.classList.remove('hidden');
+    statusEl.innerHTML =
+      '<svg class="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>' +
+      '<span>' + text + '</span>';
+  }
+
+  // ---------- Tools ----------
+  const TOOLS = [
+    {
+      type: "function",
+      function: {
+        name: "web_search",
+        description: "Search the web for current information, news, facts, or anything that may have happened after the model's training cutoff. Returns a list of results with titles, URLs, and short snippets.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "The search query." }
+          },
+          required: ["query"]
+        }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "fetch_webpage",
+        description: "Fetch and extract the readable text content of a specific webpage URL. Use this after web_search to read a page in detail, or when the user provides a direct URL.",
+        parameters: {
+          type: "object",
+          properties: {
+            url: { type: "string", description: "The full URL of the page to fetch, including https://" }
+          },
+          required: ["url"]
+        }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "calculate",
+        description: "Evaluate a mathematical expression and return the numeric result. Supports standard arithmetic, parentheses, and functions like sqrt, sin, cos, log, pow, abs, etc. Use this for any precise calculation.",
+        parameters: {
+          type: "object",
+          properties: {
+            expression: { type: "string", description: "A JavaScript-style math expression, e.g. '(12 * 7) + Math.sqrt(81)'" }
+          },
+          required: ["expression"]
+        }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "get_current_datetime",
+        description: "Get the current date and time, including the day of the week, in the user's local timezone.",
+        parameters: {
+          type: "object",
+          properties: {},
+          required: []
+        }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "generate_image",
+        description: "Generate an image from a text description and display it to the user. Use this whenever the user asks you to create, draw, generate, or make a picture/image/illustration.",
+        parameters: {
+          type: "object",
+          properties: {
+            prompt: { type: "string", description: "A detailed description of the image to generate." }
+          },
+          required: ["prompt"]
+        }
+      }
+    }
+  ];
+
+  async function execWebSearch(query) {
+    try {
+      const url = 'https://api.duckduckgo.com/?q=' + encodeURIComponent(query) + '&format=json&no_html=1&skip_disambig=1';
+      const res = await puter.net.fetch(url);
+      const data = await res.json();
+      const results = [];
+      if (data.AbstractText) {
+        results.push({ title: data.Heading || query, url: data.AbstractURL || '', snippet: data.AbstractText });
+      }
+      const flatten = (topics) => {
+        for (const t of topics) {
+          if (t.Topics) { flatten(t.Topics); }
+          else if (t.Text) { results.push({ title: t.Text.split(' - ')[0], url: t.FirstURL || '', snippet: t.Text }); }
+        }
+      };
+      if (Array.isArray(data.RelatedTopics)) flatten(data.RelatedTopics);
+
+      if (results.length === 0) {
+        // Fallback: HTML scrape of DuckDuckGo lite results
+        const htmlRes = await puter.net.fetch('https://html.duckduckgo.com/html/?q=' + encodeURIComponent(query));
+        const html = await htmlRes.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        const links = doc.querySelectorAll('a.result__a, a.result__url');
+        const snippets = doc.querySelectorAll('.result__snippet');
+        const seen = new Set();
+        links.forEach((link, i) => {
+          const href = link.href || link.getAttribute('href') || '';
+          const title = link.textContent.trim();
+          if (!title || seen.has(href)) return;
+          seen.add(href);
+          results.push({
+            title: title,
+            url: href,
+            snippet: snippets[i] ? snippets[i].textContent.trim() : ''
+          });
+        });
+      }
+
+      const top = results.slice(0, 6);
+      if (top.length === 0) {
+        return JSON.stringify({ query: query, results: [], note: "No results found." });
+      }
+      return JSON.stringify({ query: query, results: top });
+    } catch (err) {
+      return JSON.stringify({ error: 'Search failed: ' + err.message });
+    }
+  }
+
+  async function execFetchWebpage(url) {
+    try {
+      const res = await puter.net.fetch(url);
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const json = await res.json();
+        return JSON.stringify(json).slice(0, 8000);
+      }
+      const html = await res.text();
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      doc.querySelectorAll('script, style, nav, footer, header, noscript, svg, iframe').forEach(el => el.remove());
+      let text = (doc.body ? doc.body.textContent : doc.textContent) || '';
+      text = text.replace(/\s+/g, ' ').trim();
+      const title = doc.querySelector('title') ? doc.querySelector('title').textContent.trim() : '';
+      return JSON.stringify({ url: url, title: title, content: text.slice(0, 6000) });
+    } catch (err) {
+      return JSON.stringify({ error: 'Fetch failed: ' + err.message });
+    }
+  }
+
+  function execCalculate(expression) {
+    try {
+      const allowed = /^[0-9+\-*/().,\s%^a-zA-Z_]+$/;
+      if (!allowed.test(expression)) {
+        return JSON.stringify({ error: 'Expression contains disallowed characters.' });
+      }
+      const sandbox = {
+        Math, abs: Math.abs, sqrt: Math.sqrt, pow: Math.pow, log: Math.log,
+        log10: Math.log10, sin: Math.sin, cos: Math.cos, tan: Math.tan,
+        exp: Math.exp, PI: Math.PI, E: Math.E, floor: Math.floor,
+        ceil: Math.ceil, round: Math.round, min: Math.min, max: Math.max
+      };
+      const fn = new Function(...Object.keys(sandbox), 'return (' + expression + ')');
+      const result = fn(...Object.values(sandbox));
+      return JSON.stringify({ expression: expression, result: result });
+    } catch (err) {
+      return JSON.stringify({ error: 'Could not evaluate expression: ' + err.message });
+    }
+  }
+
+  function execGetDateTime() {
+    const now = new Date();
+    return JSON.stringify({
+      iso: now.toISOString(),
+      local: now.toLocaleString(),
+      day_of_week: now.toLocaleDateString(undefined, { weekday: 'long' }),
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+    });
+  }
+
+  async function execGenerateImage(prompt, container) {
+    try {
+      const result = await puter.ai.chat(prompt, { model: 'gemini-2.5-flash-image' });
+      const images = (result && result.message && result.message.images) || [];
+      if (images.length > 0 && container) {
+        const img = document.createElement('img');
+        img.src = images[0].image_url.url;
+        img.className = 'rounded-xl max-w-full mt-2 mb-2';
+        img.alt = prompt;
+        container.appendChild(img);
+      }
+      const caption = (result && result.message && typeof result.message.content === 'string')
+        ? result.message.content : '';
+      return JSON.stringify({
+        success: images.length > 0,
+        note: images.length > 0
+          ? 'Image generated and displayed to the user. ' + caption
+          : 'Image generation did not return an image.'
+      });
+    } catch (err) {
+      return JSON.stringify({ error: 'Image generation failed: ' + err.message });
+    }
+  }
+
+  async function executeTool(name, args, statusEl, imageHostEl) {
+    switch (name) {
+      case 'web_search':
+        setStatus(statusEl, 'Searching the web for "' + args.query + '"');
+        return await execWebSearch(args.query);
+      case 'fetch_webpage':
+        setStatus(statusEl, 'Reading ' + args.url);
+        return await execFetchWebpage(args.url);
+      case 'calculate':
+        setStatus(statusEl, 'Calculating');
+        return execCalculate(args.expression);
+      case 'get_current_datetime':
+        setStatus(statusEl, 'Checking the time');
+        return execGetDateTime();
+      case 'generate_image':
+        setStatus(statusEl, 'Generating image: "' + args.prompt + '"');
+        return await execGenerateImage(args.prompt, imageHostEl);
+      default:
+        return JSON.stringify({ error: 'Unknown tool: ' + name });
+    }
+  }
+
 
   // ---------- Send ----------
   async function handleSend() {
@@ -442,34 +679,84 @@
     updateSendButtonState();
     scrollToBottom();
 
-    const assistantEl = renderAssistantStreaming();
+    const { container: assistantEl, status: statusEl } = renderAssistantStreaming();
     let assistantContent = '';
-    let firstChunkReceived = false;
 
     try {
-      const response = await puter.ai.chat(messages, {
-        model: 'anthropic/claude-opus-4-8',
-        stream: true
-      });
+      const SYSTEM_PROMPT = {
+        role: 'system',
+        content: 'You are Claude, a helpful AI assistant with access to tools: web_search and fetch_webpage for current information from the internet, calculate for precise math, get_current_datetime for the current date/time, and generate_image to create and show images to the user. Use these tools proactively whenever they would improve the accuracy or usefulness of your answer, especially for anything involving recent events, current data, or facts you are not certain about. After using a tool, incorporate its results naturally into your response and cite sources by name or URL when relevant.'
+      };
+      let conversationMessages = [SYSTEM_PROMPT, ...messages.slice()];
+      const MAX_TOOL_ROUNDS = 6;
 
-      for await (const part of response) {
-        const chunkText = (part && part.text) ? part.text :
-                           (typeof part === 'string' ? part : '');
-        if (chunkText) {
-          if (!firstChunkReceived) {
-            firstChunkReceived = true;
+      for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+        const response = await puter.ai.chat(conversationMessages, {
+          model: 'anthropic/claude-opus-4-8',
+          stream: true,
+          tools: TOOLS
+        });
+
+        let roundText = '';
+        const toolCalls = [];
+
+        for await (const part of response) {
+          if (part && part.type === 'tool_use') {
+            toolCalls.push(part);
+          } else {
+            const chunkText = (part && part.text) ? part.text :
+                               (typeof part === 'string' ? part : '');
+            if (chunkText) {
+              roundText += chunkText;
+              assistantContent += chunkText;
+              assistantEl.innerHTML = marked.parse(assistantContent);
+              scrollToBottom();
+            }
           }
-          assistantContent += chunkText;
-          assistantEl.innerHTML = marked.parse(assistantContent);
-          scrollToBottom();
         }
+
+        if (toolCalls.length === 0) {
+          break;
+        }
+
+        const assistantToolMsg = {
+          role: 'assistant',
+          content: roundText || '',
+          tool_calls: toolCalls.map(tc => ({
+            id: tc.id,
+            type: 'function',
+            function: {
+              name: tc.name,
+              arguments: JSON.stringify(tc.input || {})
+            }
+          }))
+        };
+        conversationMessages.push(assistantToolMsg);
+
+        for (const tc of toolCalls) {
+          const args = tc.input || {};
+          const resultStr = await executeTool(tc.name, args, statusEl, assistantEl);
+          conversationMessages.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            content: resultStr
+          });
+        }
+
+        setStatus(statusEl, 'Thinking');
       }
 
+      setStatus(statusEl, '');
       assistantEl.classList.remove('typing-cursor');
+      if (!assistantContent.trim()) {
+        assistantContent = "I wasn't able to generate a response. Please try again.";
+        assistantEl.innerHTML = marked.parse(assistantContent);
+      }
       messages.push({ role: 'assistant', content: assistantContent });
       addChatToHistory();
     } catch (err) {
       console.error('Chat error:', err);
+      setStatus(statusEl, '');
       assistantEl.classList.remove('typing-cursor');
       assistantContent = assistantContent || 'Sorry, something went wrong while generating a response. Please try again.';
       assistantEl.innerHTML = marked.parse(assistantContent);
